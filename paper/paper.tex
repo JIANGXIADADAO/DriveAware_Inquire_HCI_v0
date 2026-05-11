@@ -1,0 +1,445 @@
+% !TEX program = xelatex
+\documentclass[12pt,a4paper]{ctexart}
+
+% ---------- Geometry ----------
+\usepackage[top=2.54cm, bottom=2.54cm, left=3.18cm, right=3.18cm]{geometry}
+
+% ---------- Fonts ----------
+% CJK fonts: let ctexart auto-detect (works on macOS, Windows, Linux/Overleaf)
+\setmainfont{Times New Roman}
+
+% ---------- Packages ----------
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage{abstract}
+
+% ---------- Captions ----------
+\captionsetup{font=small, labelfont=bf, labelsep=quad, justification=centering}
+
+% ---------- Section formatting ----------
+\ctexset{
+    section = {
+        format = {\centering\large\bfseries\heiti},
+        number = {\arabic{section}},
+        aftername = {\quad},
+    },
+    subsection = {
+        format = {\bfseries\heiti},
+        number = {\arabic{section}.\arabic{subsection}},
+        aftername = {\quad},
+    },
+    subsubsection = {
+        format = {\bfseries\heiti},
+        number = {\arabic{section}.\arabic{subsection}.\arabic{subsubsection}},
+        aftername = {\quad},
+    },
+}
+
+% ---------- Headers / Footers ----------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[C]{\small 基于驾驶员状态感知的询问式智能座舱交互系统}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---------- Paragraph ----------
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt}
+
+% ---------- Abstract style ----------
+\renewcommand{\abstractname}{\centering\large\bfseries\heiti 摘\ \ 要}
+\renewcommand{\abstracttextfont}{\normalsize}
+
+\begin{document}
+
+% =========================== TITLE ===========================
+\begin{center}
+    {\LARGE\bfseries\heiti 基于驾驶员状态感知的\\[6pt]询问式智能座舱交互系统}
+
+    \vspace{18pt}
+
+    {\large
+    xxx\\[6pt]
+    中法航空学院 \\
+    北京航空航天大学 \\
+    22222\\[6pt]
+    Email: xxx@buaa.edu.cn
+    }
+
+\end{center}
+
+\vspace{-6pt}
+
+% =========================== ABSTRACT ===========================
+\begin{abstract}
+\noindent
+当前驾驶员监控系统（DMS）普遍将哈欠视为疲劳告警信号，采取强制干预策略，剥夺了用户的决策权。
+本文提出一种\textbf{询问式交互}范式：系统将哈欠视作低唤醒度放松状态的线索（cue），以语音主动向驾驶员发起询问，由驾驶员确认后执行座舱模式切换。
+系统基于 MediaPipe 面部 landmark 计算 MAR（Mouth Aspect Ratio），采用指数衰减评分模型检测哈欠；
+通过 Whisper 本地语音识别与双层 NLP（关键词匹配 + DeepSeek API fallback）解析驾驶员意图；
+由 FSM 驱动八状态交互流程，在 Pygame 桌面环境中模拟 Dynamic Mode / Rest Mode 双模式座舱切换。
+本文重点分析该系统的\textbf{Shared Control}与\textbf{Human-in-the-Loop}设计原则，讨论询问式交互对\textbf{User Agency}的保护机制。
+系统在 PC 平台上完整实现了 perception--inquiry--confirmation--execution 闭环，为智能座舱中非侵入式主动交互提供了可运行的参考原型。
+
+\vspace{6pt}
+\noindent\textbf{关键词：}智能座舱；询问式交互；用户主体性；共享控制；人在回路；驾驶员状态感知
+\end{abstract}
+
+% =========================== 1. INTRODUCTION ===========================
+\section{引言}
+
+智能座舱正从被动响应式向主动交互式演进。奔驰、华为、比亚迪等厂商的量产 DMS 已具备面部行为识别能力，但其交互逻辑仍是单方向的：检测到疲劳信号 $\rightarrow$ 触发告警或强制模式切换。驾驶员没有选择空间。
+
+然而，哈欠作为一种常见的驾驶舱内行为，其信号含义存在根本性的模糊。人可能因为疲劳、舒适放松、午饭后生理反应或长途驾驶中的身体拉伸而哈欠。将哈欠一概等同于危险疲劳信号而触发告警，不仅可能误判用户意图，更可能引发用户对系统的反感与信任下降。
+
+本文提出一种不同的交互范式：\textbf{询问式交互（inquiry-based interaction）}。系统通过视觉感知检测哈欠，将其视作低唤醒度放松状态的线索，随后以自然语音主动向驾驶员发起询问——“你是否想切换至 Dynamic Mode？”——由驾驶员的口头回应决定是否执行切换。
+
+核心设计原则是\textbf{Shared Control}与\textbf{Human-in-the-Loop}：系统承担感知与建议的角色，最终决策权始终保留在驾驶员手中。系统 propose，人不 impose。
+
+本文贡献如下：
+\begin{enumerate}[label=\arabic*.]
+    \item 提出并实现了一个完整的询问式智能座舱交互闭环原型（perception $\rightarrow$ inquiry $\rightarrow$ confirmation $\rightarrow$ execution）
+    \item 定义了 Dynamic Mode / Rest Mode 双模式及其触发的 voice-in-the-loop 流程
+    \item 从 User Agency 与 Shared Control 视角分析了询问 vs 自动执行的设计差异
+    \item 在 PC 平台上以纯软件方式模拟了座舱环境切换（环境光、音效、虚拟空调、UI），无需物理车机硬件
+\end{enumerate}
+
+% =========================== 2. RELATED WORK ===========================
+\section{相关工作}
+
+\subsection{驾驶员疲劳检测}
+
+基于面部特征的驾驶员疲劳检测研究已较为成熟。Pan 等人在高速铁路驾驶员疲劳研究中采用 Dlib 面部 landmark 提取 EAR（Eye Aspect Ratio）与 MAR（Mouth Aspect Ratio）作为疲劳指标\cite{pan_highspeed}。Pan 等人进一步探索了多模态融合方案，结合面部特征与车辆行为数据提升检测精度\cite{pan_multimodal}。e-candeloro 等人提出的 Driver-State-Detection 系统使用指数衰减的 AttentionScorer 评分模型替代严格的连续帧计数\cite{candeloro}。
+
+上述研究均将哈欠定义为疲劳危险信号，交互终点为系统告警或强制干预。
+
+\subsection{智能座舱 HCI}
+
+在 HCI 领域，驾驶员-车辆交互的研究正从被动响应转向主动式与自适应交互。已有工作探索了基于驾驶员状态的个性化座舱调节、情感化车内氛围灯设计，以及语音助手在车内的应用。然而，多数系统采用自动执行策略——系统判定状态后直接触发环境变化——而不经过用户确认环节。
+
+\subsection{Shared Control 与 Human-in-the-Loop}
+
+Shared Control 概念在自动驾驶领域通常指方向盘/油门/制动的控制权分配。本文将其延伸至\textbf{座舱环境控制}维度：系统可以感知、建议、准备执行，但执行的前提是用户确认。Human-in-the-Loop 体现在系统的每个状态转换 gate 均为用户行为（哈欠、语音回应），错误时系统退回监控状态而非强制执行。
+
+% =========================== 3. SYSTEM OVERVIEW ===========================
+\section{系统总览}
+
+系统采用四层架构，运行于 Windows PC 平台：
+
+\begin{enumerate}[label=\arabic*.]
+    \item \textbf{Perception Layer}：15fps 摄像头采集 $\rightarrow$ MediaPipe Face Landmarker（478 点）$\rightarrow$ MAR 计算 $\rightarrow$ 指数衰减评分哈欠检测
+    \item \textbf{Core Layer}：线程安全的 SharedState 数据总线 + 八状态 FSM + 双模式定义
+    \item \textbf{Interaction Layer}：TTS 语音合成（pyttsx3）、Whisper STT 语音识别、双层 NLP 意图解析（关键词 + DeepSeek API fallback）、VAD 连续语音监听
+    \item \textbf{Execution Layer}：Pygame 1280$\times$720 UI、环境光渐变、双模式音效、虚拟空调参数显示
+\end{enumerate}
+
+系统同时提供两条交互路径：
+\begin{itemize}
+    \item \textbf{Path A（哈欠触发）}：Rest Mode 下累积 2 次哈欠 $\rightarrow$ TTS 主动询问 $\rightarrow$ 驾驶员语音回应 $\rightarrow$ 模式切换
+    \item \textbf{Path B（持续语音指令）}：驾驶员随时说出“switch to dynamic/rest mode”，系统立即切换，优先级高于 Path A
+\end{itemize}
+
+% =========================== 4. INTERACTION DESIGN ===========================
+\section{交互设计}
+
+\subsection{双模式定义}
+
+\begin{table}[htbp]
+\centering
+\caption{座舱双模式定义}
+\begin{tabular}{@{}p{2.5cm}p{4cm}p{4cm}@{}}
+\toprule
+& \textbf{Dynamic Mode} & \textbf{Rest Mode} \\
+\midrule
+环境光   & 暖橙 (255, 80, 0)    & 冷蓝 (80, 120, 255) \\
+虚拟空调 & 18°C / 强风 / 面部送风       & 26°C / 弱风 / 脚部送风 \\
+音效     & 高节奏             & 舒缓 \\
+触发     & 回应“Yes”或主动指令 & 回应“No”或默认保持 \\
+用户意图 & 接受建议，寻求更活跃体验 & 拒绝建议，维持舒适状态 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Rest Mode 是系统默认状态。这一设计选择暗含了\textbf{安静优先于打扰}的立场：系统不会主动改变座舱环境，除非驾驶员确认接受。
+
+\subsection{哈欠触发流程}
+
+哈欠触发流程由 FSM 驱动，经历 8 个状态：
+
+\begin{enumerate}[label=\arabic*.]
+    \item \textbf{MONITORING}：常态监控，检测哈欠计数。仅当 active\_mode = “rest”且 count $\geq$ 2 时触发
+    \item \textbf{YAWN\_DETECTED}：去抖闸门，下一帧自动转 INQUIRING
+    \item \textbf{INQUIRING}：TTS 播报“You seem relaxed. Would you like to change to Dynamic Mode?”
+    \item \textbf{LISTENING}：录音 5 秒
+    \item \textbf{TRANSCRIBING}：Whisper 本地转写
+    \item \textbf{PARSING}：NLP 意图解析
+    \item \textbf{CONFIRMING}：TTS 确认播报（“Switching to Dynamic Mode.” / “Staying in Rest Mode.”）
+    \item \textbf{SWITCHING}：环境光渐变、音效切换、UI 更新，回到 MONITORING
+\end{enumerate}
+
+意图未知时最多重试 2 次，第三次静默退出至 MONITORING。
+
+\subsection{为什么是“询问”而非“自动执行”}
+
+哈欠信号的根本问题是\textbf{意图模糊}——同一生理信号可能对应多种用户需求。
+
+人哈欠的可能原因：疲劳/低唤醒度（可能需要更刺激的驾驶环境）；刚坐进车里感到舒适放松（不需要任何改变）；午饭后的自然生理反应（不需要任何改变）；长途驾驶中的拉伸（可能需要放松而非刺激）。系统无法从 MAR 数值中区分这些场景。任何单模态信号都不足以推断用户意图。
+
+自动执行的风险：用户可能正享受 Rest Mode 的安静氛围，系统擅自切换构成打扰；用户不理解环境为何变化，信任受损；若要切回，产生额外操作负担。自动执行即系统替用户做决定，即\textbf{剥夺 User Agency}。
+
+询问式交互的核心：系统说“我观察到了 X，你想要 Y 吗？”，用户说“要”或“不要”。系统承担感知与建议的职责，用户保留决策与确认的权力。交互是\textbf{双方协作}而非单方覆盖。这就是 Shared Control 在交互层面的具体实现。
+
+\subsection{非侵入式设计原则}
+
+\begin{enumerate}[label=\arabic*.]
+    \item \textbf{默认安静}：Rest 为默认模式，不主动发声
+    \item \textbf{可取消}：语音指令随时可用，无需等待哈欠流程完成
+    \item \textbf{有限重试}：2 次未知意图后静默退出
+    \item \textbf{冷启动宽松}：需 2 次哈欠才触发，降低误触发率
+    \item \textbf{Cooldown}：每次语音处理后 2 秒冷却，避免 TTS 输出被麦克风捡回
+    \item \textbf{优先级分层}：用户主动指令 $>$ 系统发起的询问流程
+\end{enumerate}
+
+\subsection{信任与心理模型}
+
+传统告警式 DMS 的问题在于：用户感到的是\textbf{监视 + 强制}。系统响警报 $\rightarrow$ 用户感到被评判 $\rightarrow$ 信任下降。
+
+本系统的设计试图构建另一种心理模型：系统在\textbf{观察}但不评判；系统在\textbf{建议}但不强制；用户感到的是\textbf{被关注 + 有选择}。
+
+用户确认机制不仅是功能需要，更是信任构建机制。每一次“询问 $\rightarrow$ 确认 $\rightarrow$ 执行”的完整循环都是一次 micro-trust event：系统证明自己是可预测的、可被取消的、不越界的。
+
+\subsection{当前交互设计的不足}
+
+\begin{enumerate}[label=\arabic*.]
+    \item 哈欠检测延迟：累积 2 次哈欠可能耗时 30 秒至数分钟，用户可能已在等待
+    \item 询问语单一：每次都是相同句式，缺少上下文变化
+    \item 无 neglection 机制：用户多次拒绝 Dynamic 建议后系统不应反复询问，但当前未实现
+    \item 无法识别主动哈欠 vs 自发哈欠：所有哈欠都被视为潜在 cue
+\end{enumerate}
+
+% =========================== 5. SYSTEM ARCHITECTURE ===========================
+\section{系统架构}
+
+\subsection{感知层——哈欠检测 Pipeline}
+
+摄像头以 15fps 采集 RGB 帧，缩放到 450px 宽度后送入 MediaPipe Face Landmarker，提取 478 点面部 landmark。
+
+MAR 采用六点法 inner lip contour 计算。Width 取左右嘴角距离 $d(p_1, p_5)$，Height 取三对上下唇内轮廓点距离的均值。MAR 公式如下：
+\begin{equation}
+\text{MAR} = \frac{d(p_2,p_8) + d(p_3,p_7) + d(p_4,p_6)}{3.0 \times d(p_1,p_5)}
+\end{equation}
+其中 $p_1$(61) 为左嘴角，$p_5$(291) 为右嘴角，其余为上下唇内轮廓点。闭口 MAR $\approx$ 0.2--0.3，张口哈欠 MAR $\approx$ 0.5--0.8。
+
+哈欠检测采用\textbf{指数衰减评分模型}，参考 AttentionScorer\cite{candeloro}，替代严格的连续帧计数：
+\begin{itemize}
+    \item MAR $>$ threshold（0.48）：$score \mathrel{+}= growth$，其中 $growth = 1.0 / 20 \times 1.2 = 0.06$
+    \item MAR $<$ threshold：$score \times= 0.85$（单帧仅损失 15\% 证据）
+    \item $score \geq 1.0$：触发哈欠，score 归零，启动 2 秒 cooldown
+\end{itemize}
+该模型的优势在于：短暂 landmark 抖动不会归零累积证据，更接近人对哈欠的判断方式。当前参数下约需 17 帧（$\sim$1.13s @ 15fps）持续张口即可触发。
+
+\begin{table}[htbp]
+\centering
+\caption{哈欠检测关键参数}
+\begin{tabular}{@{}ccc@{}}
+\toprule
+\textbf{参数} & \textbf{值} & \textbf{含义} \\
+\midrule
+MAR\_THRESHOLD        & 0.48 & 张口阈值 \\
+MAR\_SUSTAINED\_FRAMES & 20   & $\sim$1.3s @ 15fps 持续张口 \\
+MAR\_COOLDOWN\_SECONDS & 2.0  & 两次哈欠间最短间隔 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{交互层——语音交互 Pipeline}
+
+\textbf{哈欠触发路径：}FSM 进入 LISTENING 状态后，AudioRecorder 录音 5 秒 $\rightarrow$ STTEngine 转写（Whisper，boost 3.0$\times$）$\rightarrow$ NLPParser 意图解析。录音模块启动时自动检测最佳麦克风，测试多种采样率/通道组合，选择 RMS 最高的配置。
+
+\textbf{持续语音监听路径：}独立线程（VoiceListener），基于 VAD。0.2s chunk $\rightarrow$ RMS 计算 $\rightarrow$ 与自适应阈值比较。自适应阈值 $= \max(\text{base\_threshold}, \text{noise\_floor} \times 3.0)$。Noise floor 通过 EMA 持续追踪，仅在不主动监听时更新，避免语音抬高噪声基线。3 个连续 speech chunk 触发录音，15 个连续 silence chunk 停止录音。
+
+\textbf{STT：}Whisper “small”模型（$\sim$244M 参数），本地离线推理。已知问题：“small”模型对短单词存在幻读（“Yes”$\rightarrow$“Yinz”，“Rest”$\rightarrow$“Res”），通过关键词词典扩展缓解。
+
+\textbf{NLP——双层解析：}关键词匹配优先（0ms 延迟），覆盖约 90\% 场景。关键词列表包含 Yes-like 词（yes, yeah, yep, ok, sure, yinz*, yass*, $\dots$）与 Rest-like 词（no, nope, rest, relax, calm, res*, ress*, $\dots$），其中 * 标记为 Whisper 常见误识别词。关键词未命中时 fallback 至 DeepSeek API（temperature = 0.0，max\_tokens = 10，3 次重试），API 失败返回“unknown”。
+
+\subsection{核心层——状态管理}
+
+\textbf{SharedState：}单一数据总线，所有线程（Camera、TTS、VoiceListener、FSM/UI）通过它通信，\texttt{threading.Lock} 保护所有读写。关键字段包括 system\_state（FSM 当前状态）、yawn\_detected / yawn\_count（哈欠信号）、last\_intent / last\_transcript（NLP 结果）、tts\_done / worker\_done（状态转换门控）、voice\_intent（持续语音指令）、active\_mode（当前座舱模式）。
+
+\textbf{FSM：}8 状态纯函数 \texttt{update(shared)}，每帧由 Pygame 主循环（60fps）调用。状态转换条件：
+
+\begin{itemize}
+    \item MONITORING $\rightarrow$ YAWN\_DETECTED：yawn\_detected 且 count $\geq$ 2 且 active\_mode = “rest”
+    \item YAWN\_DETECTED $\rightarrow$ INQUIRING：无条件（去抖闸门）
+    \item INQUIRING $\rightarrow$ LISTENING：tts\_done
+    \item LISTENING $\rightarrow$ TRANSCRIBING：worker\_done（录音结束）
+    \item TRANSCRIBING $\rightarrow$ PARSING：worker\_done（STT + NLP 完成）
+    \item PARSING $\rightarrow$ CONFIRMING：intent $\in$ \{dynamic, rest\}
+    \item PARSING $\rightarrow$ INQUIRING（重试）：intent = unknown 且 retries $<$ 2
+    \item PARSING $\rightarrow$ MONITORING（放弃）：retries $\geq$ 2
+    \item CONFIRMING $\rightarrow$ SWITCHING：tts\_done
+    \item SWITCHING $\rightarrow$ MONITORING：无条件
+\end{itemize}
+
+\subsection{执行层——UI 与环境模拟}
+
+Pygame 主循环每帧执行：FSM 状态转换 $\rightarrow$ 触发 TTS / voice pipeline $\rightarrow$ 检查哈欠触发路径意图 $\rightarrow$ 检查持续语音指令意图 $\rightarrow$ 环境光渐变（每帧 8 RGB step）$\rightarrow$ UI 渲染。
+
+UI 组件包括：主标题（模式名称）、环境光颜色标签、虚拟空调参数（温度/风速/送风方向）、面部预览小窗（320$\times$240，左下角，含 MAR 值与 Face 状态叠加）、麦克风电平指示、底部按键提示。
+
+\subsection{线程模型}
+
+系统包含 6 个并发执行单元：Main Thread（Pygame UI + FSM，60fps）、Camera Thread（15fps 采集与检测）、TTS Thread（queue-based speak，阻塞 runAndWait）、VoiceListener Thread（continuous VAD + STT + NLP）、Voice Pipeline Thread（one-shot，每次哈欠触发交互时创建）、Watchdog（每 60 帧检查 camera/tts/listener 线程健康，自动重启最多 3 次）。
+
+\begin{table}[htbp]
+\centering
+\caption{当前架构的主要局限}
+\begin{tabular}{@{}p{3.5cm}p{7.5cm}@{}}
+\toprule
+\textbf{问题} & \textbf{说明} \\
+\midrule
+无消息总线 & 线程间通信依赖 SharedState + polling，缺乏事件驱动机制 \\
+TTS 无精确回调 & pyttsx3 缺少播报完成信号，FSM 通过标志位 polling 判断 \\
+Whisper 加载阻塞 & stt.load() 在启动阶段阻塞（$\sim$5--15s），期间 UI 不可交互 \\
+FSM 与 UI 耦合 & FSM 逻辑与 action 触发分离在两个函数中，存在隐式时序依赖 \\
+无配置热加载 & 所有参数在 config.py 中硬编码，运行时不可调 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =========================== 6. USER AGENCY & SHARED CONTROL ===========================
+\section{User Agency 与 Shared Control 分析}
+
+\subsection{决策权归属}
+
+在传统 DMS 范式与本文提出的询问式范式之间，根本差异在于\textbf{决策权归属}：
+
+\begin{itemize}
+    \item \textbf{传统 DMS}：传感器判定 $\rightarrow$ 系统执行。决策权在系统。
+    \item \textbf{本系统}：传感器感知 $\rightarrow$ 系统建议 $\rightarrow$ 用户确认 $\rightarrow$ 系统执行。决策权在用户。
+\end{itemize}
+
+询问环节将原本封闭的“sense--act”循环改造为开放的“sense--propose--confirm--act”循环。这增加了一个交互步骤，但换回的是\textbf{用户对自身驾驶环境的控制感}。
+
+\subsection{Shared Control 的具体实现}
+
+在座舱环境控制维度上，Shared Control 体现为三层：
+
+\begin{enumerate}[label=\arabic*.]
+    \item \textbf{感知层共享}：系统持续感知驾驶员状态，但不基于感知结果直接行动
+    \item \textbf{决策层共享}：系统提出建议，用户作出决策——双方共同完成从感知到执行的认知链
+    \item \textbf{执行层可覆盖}：用户的主动语音指令可随时取消系统发起的询问流程
+\end{enumerate}
+
+\subsection{Human-in-the-Loop 的 Gate 设计}
+
+FSM 的每个状态转换 gate 均锚定于用户行为：MONITORING $\rightarrow$ YAWN\_DETECTED（用户哈欠行为）；LISTENING $\rightarrow$ TRANSCRIBING（用户语音输入）；PARSING $\rightarrow$ CONFIRMING / 重试 / 放弃（用户的明确或模糊回应）。系统从不跳过这些 gate。即使在意图解析失败时，系统行为是退回监控而非猜测执行。
+
+\subsection{通过 Micro-Confirmations 建立信任}
+
+每一次“询问 $\rightarrow$ 确认 $\rightarrow$ 执行”的完整循环都是一次 micro-trust event：系统证明自己是可预测的、可被取消的、不越界的。
+
+传统告警式 DMS 在用户心理模型中构建的是\textbf{监视 + 强制}的体验。本系统试图构建\textbf{被关注 + 有选择}的体验。确认机制不仅是一个功能环节，更是信任构建的机制——用户通过每一次确认，建立起对系统行为的预测与控制。
+
+\subsection{双层交互路径的优先级逻辑}
+
+持续语音指令（Path B）允许用户在任何时候说话切换模式。当它与哈欠触发流程（Path A）冲突时，用户主动指令获胜——FSM 立即重置回 MONITORING，取消正在进行的询问流程。这一设计原则是：\textbf{用户主动操作优先级 $>$ 系统发起流程}。这是 Shared Control 的一条具体实现规则。
+
+% =========================== 7. DISCUSSION ===========================
+\section{讨论}
+
+\subsection{哈欠的重新定义}
+
+本项目的一个核心观点是：将哈欠从“疲劳告警信号”重新定义为“低唤醒度放松状态的行为线索”。这不是语义上的微调，而是从根本上改变了系统对该信号的处理方式：告警信号必须响应（alert-response），行为线索可以询问（cue-inquiry）。这一重新定义使得同一生理信号可以通向完全不同的交互路径，也为驾驶员保留了“我只是打了个哈欠，不想切模式”的拒绝权。
+
+\subsection{桌面原型的方法论意义}
+
+本系统完全在 PC 平台上实现，不依赖物理车机硬件。这种纯软件模拟方案的价值在于：在硬件集成之前验证交互逻辑的可行性与用户体验假设。对于 HCI 早期的交互范式探索，软件原型的迭代成本远低于硬件集成。
+
+然而，桌面原型与车规系统之间存在显见的鸿沟：扬声器-麦克风回环、光照条件差异、无 CAN 总线数据、无真实驾驶场景的认知负荷。原型中验证的交互逻辑在真实车载环境中的表现仍需独立评估。
+
+\subsection{询问式交互范式的可迁移性}
+
+询问式交互不限于哈欠 $\rightarrow$ 模式切换的场景。任何需要推断驾驶员意图的场景——导航偏好、音乐选择、车内温度、座椅位置——都可以套用这一模板：感知信号 $\rightarrow$ 状态线索 $\rightarrow$ 主动但非强制询问 $\rightarrow$ 用户确认后执行。这为智能座舱中的主动交互提供了一套可复用的 design pattern。
+
+% =========================== 8. LIMITATIONS ===========================
+\section{局限性}
+
+\begin{enumerate}[label=\arabic*.]
+    \item \textbf{单模态感知}：仅依赖 MAR 信号，未融合 EAR、头部姿态、车辆行为等多模态信息。单模态信号对疲劳/放松的判断置信度有限。
+    \item \textbf{非个性化阈值}：MAR 阈值（0.48）为全局固定值，未针对个体面部特征做标定。不同用户的唇形、张口习惯差异可能影响检测灵敏度。
+    \item \textbf{环境光照敏感}：MediaPipe landmark 在暗光环境中的稳定性未经测试。真实车载环境的夜驾场景可能是本系统的薄弱环节。
+    \item \textbf{Whisper 误识别}：“small”模型对短单词的幻读（“Yes”$\rightarrow$“Yinz”，“Rest”$\rightarrow$“Res”）通过关键词扩展缓解，但非根治。
+    \item \textbf{TTS 回调不精确}：pyttsx3 缺少精确的播报完成信号，FSM 通过标志位 polling 判断完成，存在竞态窗口。
+    \item \textbf{PC 桌面原型}：未适配车规硬件、无 CAN 总线集成、无真实驾驶场景验证。交互逻辑在真实车载环境中的有效性未经评估。
+    \item \textbf{无用户行为记忆}：系统不记录用户偏好与历史拒绝行为，每次交互为独立会话。
+    \item \textbf{无形式化用户研究}：目前为原型验证阶段，尚未进行对照用户实验或用户体验量化评估。
+\end{enumerate}
+
+% =========================== 9. FUTURE WORK ===========================
+\section{未来工作}
+
+\subsection{多模态感知融合}
+
+融合 EAR、PERCLOS、头部姿态、方向盘微操等信号，构建多维疲劳概率曲线。基于多信号置信度决定是否发起询问，降低单模态的误触发率。
+
+\subsection{个性化基线标定}
+
+启动时 30 秒标定流程——中性表情 + 刻意哈欠——计算个性化 MAR baseline 与 threshold。长期标定：记录用户不同时段的 MAR 分布，建立时间-唤醒度模型。
+
+\subsection{自适应交互}
+
+用户连续拒绝 Dynamic 建议后提升触发阈值，避免反复打扰。询问语根据上下文变化。通过 CAN 总线获取车辆状态，避免在高认知负荷时段（换道、路口）发起询问。
+
+\subsection{LLM-based In-Car Agent}
+
+当前 NLP 为分类式（dynamic / rest / unknown）。引入小参数量本地 LLM（1B--3B，int4 量化）实现开放域对话理解、多轮对话、用户犹豫/偏好/拒绝的细粒度理解。LLM 的真正价值在于处理 User Agency 的表达多样性。
+
+\subsection{车载部署}
+
+硬件：车规 SoC、车规摄像头、独立声道 TTS。总线：CAN/LIN 读取车辆状态并控制真实空调/灯光/座椅。实时性：端到端延迟 $<$ 500ms。认证：ISO 26262、ISO 21434。
+
+\subsection{用户研究}
+
+未来需开展对照实验，比较三种交互范式——询问式、通知式（系统告知后将切换但不需确认）、自动式——在用户满意度、决策质量、系统信任度等维度上的差异。核心研究问题：询问式交互是否在保护 User Agency 的同时不显著增加认知负荷？
+
+% =========================== 10. CONCLUSION ===========================
+\section{结论}
+
+本文提出了一个基于驾驶员状态感知的询问式智能座舱交互系统。系统将哈欠视作低唤醒度放松状态的行为线索，通过视觉感知 + 语音询问 + 用户确认的闭环，实现了在保护 User Agency 前提下的主动式座舱环境切换。
+
+系统在 PC 平台上完整实现了 perception $\rightarrow$ inquiry $\rightarrow$ confirmation $\rightarrow$ execution 的全流程，包括 MediaPipe 面部 landmark 提取、MAR 指数衰减评分、Whisper STT、双层 NLP 意图解析、FSM 驱动的八状态交互流程，以及 Pygame 桌面环境中的双模式座舱模拟。
+
+本文的核心论点是：在驾驶员状态感知系统中，单模态生理信号不足以推断用户意图。解决之道不是更精准的算法，而是将决策权交还给用户——通过询问式交互，在 Shared Control 与 Human-in-the-Loop 的框架下实现系统能力与用户自主性的平衡。
+
+% =========================== REFERENCES ===========================
+\begin{thebibliography}{9}
+
+\bibitem{pan_highspeed}
+Q.~Pan et al., ``High-speed rail driver fatigue detection based on facial features,'' \emph{Railway Sciences}, 202X.
+
+\bibitem{pan_multimodal}
+X.~Pan et al., ``Multimodal fusion for train driver fatigue detection,'' \emph{Transportation Safety Research}, 202X.
+
+\bibitem{candeloro}
+e-candeloro, ``Driver-State-Detection,'' GitHub repository.\\
+\url{https://github.com/e-candeloro/Driver-State-Detection}
+
+\bibitem{whisper}
+A.~Radford et al., ``Robust Speech Recognition via Large-Scale Weak Supervision,'' \emph{arXiv:2212.04356}, 2022.
+
+\bibitem{mediapipe}
+Google, ``MediaPipe Face Landmarker.''\\
+\url{https://developers.google.com/mediapipe/solutions/vision/face_landmarker}
+
+\bibitem{dms_review}
+Euro NCAP, ``2026 Protocol -- Driver Monitoring,'' 2025.
+
+\end{thebibliography}
+
+\end{document}
